@@ -2501,3 +2501,89 @@ asyncTest( "Self-closing tags cannot be used to run injected event handlers (CVE
 		strictEqual( window.cve202011022, false, "onerror handler of the injected <img> was not executed" );
 	}, 1000 );
 });
+
+test( "<option> and <optgroup> are parsed like the browser parses them outside of <select> (CVE-2020-11023)", function() {
+
+	var probe = document.createElement( "div" ),
+		payloads = [
+
+			// From the security advisory GHSA-jpcq-cgw6-v4j6
+			"<option><style></option></select><img title='xss'></style>",
+			"<optgroup><style></optgroup></select><img title='xss'></style>",
+
+			// A stray </select> must not close a hidden <select> wrapper
+			// and move the rest of the markup out of the parsed content
+			"<option>a</option></select><img title='xss'>",
+			"<optgroup label='a'></optgroup></select><option>b</option>"
+		];
+
+	function serialize( nodes ) {
+		var i,
+			result = "";
+
+		for ( i = 0; i < nodes.length; i++ ) {
+			result += nodes[ i ].nodeType === 1 ? nodes[ i ].outerHTML : nodes[ i ].nodeValue;
+		}
+
+		return result;
+	}
+
+	// Support: IE<=9 only
+	// <option> is dropped outside of <select> there, so the wrapper is still required
+	probe.innerHTML = "<option></option>";
+	if ( !probe.lastChild ) {
+		expect( 1 );
+		ok( true, "<option> cannot be parsed outside of <select> in this browser" );
+		return;
+	}
+
+	expect( payloads.length * 5 );
+
+	jQuery.each( payloads, function( i, html ) {
+		var expected,
+			container = jQuery( "<div><span></span></div>" );
+
+		// What a sanitizer working on a detached element sees
+		probe.innerHTML = html;
+		expected = serialize( probe.childNodes );
+
+		strictEqual( serialize( jQuery( html ) ), expected, "jQuery( html ): " + html );
+		strictEqual( serialize( jQuery.parseHTML( html ) ), expected, "jQuery.parseHTML(): " + html );
+		strictEqual( serialize( jQuery( "<div></div>" ).html( html )[ 0 ].childNodes ), expected,
+			".html(): " + html );
+		strictEqual( serialize( jQuery( "<div></div>" ).append( html )[ 0 ].childNodes ), expected,
+			".append(): " + html );
+
+		container.children().replaceWith( html );
+		strictEqual( serialize( container[ 0 ].childNodes ), expected, ".replaceWith(): " + html );
+	});
+});
+
+asyncTest( "<option> and <optgroup> cannot be used to run injected event handlers (CVE-2020-11023)", function() {
+
+	var $fixture = jQuery( "#qunit-fixture" ),
+		payloads = [
+
+			// From the security advisory GHSA-jpcq-cgw6-v4j6
+			"<option><style></option></select><img src='x' onerror='cve202011023 = true'></style>",
+			"<optgroup><style></optgroup></select><img src='x' onerror='cve202011023 = true'></style>"
+		];
+
+	expect( 1 );
+
+	Globals.register( "cve202011023" );
+	jQuery.globalEval( "cve202011023 = false;" );
+
+	jQuery.each( payloads, function( i, html ) {
+		jQuery( html );
+		jQuery( "<div></div>" ).appendTo( $fixture ).html( html );
+		jQuery( "<div></div>" ).appendTo( $fixture ).append( html );
+		jQuery( "<div></div>" ).appendTo( $fixture ).prepend( html );
+		jQuery( "<div><span></span></div>" ).appendTo( $fixture ).children().after( html );
+	});
+
+	window.setTimeout(function() {
+		start();
+		strictEqual( window.cve202011023, false, "onerror handler of the injected <img> was not executed" );
+	}, 1000 );
+});
