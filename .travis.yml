@@ -1,3 +1,19 @@
 language: node_js
 node_js:
 - '0.10'
+addons:
+  chrome: stable
+before_script:
+- sudo apt-get update && sudo apt-get install -y apache2 libapache2-mod-php
+- d="$TRAVIS_BUILD_DIR"; while [ "$d" != "/" ]; do sudo chmod o+x "$d"; d="$(dirname "$d")"; done
+- chmod -R o+rX "$TRAVIS_BUILD_DIR" && chmod o+w "$TRAVIS_BUILD_DIR/test/data/support/csp.log"
+- printf '<VirtualHost *:80>\n\tServerName 127.0.0.1\n\tDocumentRoot "%s"\n\t<Directory "%s">\n\t\tOptions +FollowSymLinks\n\t\tAllowOverride All\n\t\tRequire all granted\n\t</Directory>\n\tErrorLog ${APACHE_LOG_DIR}/error.log\n\tCustomLog ${APACHE_LOG_DIR}/access.log combined\n</VirtualHost>\n' "$TRAVIS_BUILD_DIR" "$TRAVIS_BUILD_DIR" | sudo tee /etc/apache2/sites-available/jquery-tests.conf
+- sudo a2dissite 000-default && sudo a2ensite jquery-tests && sudo service apache2 restart
+- for i in $(seq 1 30); do curl -sf -o /dev/null http://127.0.0.1/test/index.html && break; sleep 1; done
+- curl -sf -o /dev/null http://127.0.0.1/test/index.html && test "$(curl -sf 'http://127.0.0.1/test/data/echoQuery.php?phpok')" = phpok
+script:
+- npm test
+- bash -c 'source ~/.nvm/nvm.sh && nvm install 18 && mkdir -p /tmp/qrunner && cd /tmp/qrunner && npm init -y >/dev/null && npm install --no-audit --no-fund puppeteer-core@21 && NODE_PATH=/tmp/qrunner/node_modules CHROME_BIN="$(which google-chrome)" node "$TRAVIS_BUILD_DIR/test/run-qunit-headless.js" "http://127.0.0.1/test/index.html?dev"'
+after_failure:
+- sudo tail -100 /var/log/apache2/error.log
+- sudo tail -100 /var/log/apache2/access.log

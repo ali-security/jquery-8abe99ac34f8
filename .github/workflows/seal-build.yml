@@ -1,0 +1,87 @@
+name: seal-build
+
+on:
+  workflow_dispatch: {}
+
+env:
+  NPM_CONFIG_REGISTRY: https://:2014-05-01T18%3A05%3A32.863Z@time-machines-npm.sealsecurity.io/
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '0.10'
+
+      - name: Install faketime
+        run: sudo apt-get update && sudo apt-get install -y faketime
+
+      - name: Show toolchain versions
+        run: node --version && npm --version
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build (grunt default task under 2014 release clock)
+        env:
+          TZ: UTC
+        run: faketime -f '@2014-05-01 17:42:00' ./node_modules/.bin/grunt
+
+      - name: Create CDN release copies (build/release.js makeReleaseCopies)
+        run: |
+          mkdir -p dist/cdn
+          cat > "$RUNNER_TEMP/make-release-copies.js" <<'EOF'
+          var fs = require("fs");
+          var path = require("path");
+          var root = process.argv[2];
+          var pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
+          var version = pkg.version;
+          var releaseFiles = {
+            "jquery-VER.js": "dist/jquery.js",
+            "jquery-VER.min.js": "dist/jquery.min.js",
+            "jquery-VER.min.map": "dist/jquery.min.map",
+            "jquery.js": "dist/jquery.js",
+            "jquery.min.js": "dist/jquery.min.js",
+            "jquery.min.map": "dist/jquery.min.map",
+            "jquery-latest.js": "dist/jquery.js",
+            "jquery-latest.min.js": "dist/jquery.min.js",
+            "jquery-latest.min.map": "dist/jquery.min.map"
+          };
+          Object.keys(releaseFiles).forEach(function (key) {
+            var text;
+            var builtFile = path.join(root, releaseFiles[key]);
+            var unpathedFile = key.replace(/VER/g, version);
+            var releaseFile = path.join(root, "dist/cdn/" + unpathedFile);
+            if (/\.map$/.test(releaseFile)) {
+              text = fs.readFileSync(builtFile, "utf8")
+                .replace(/"file":"([^"]+)","sources":\["([^"]+)"\]/,
+                  "\"file\":\"" + unpathedFile.replace(/\.min\.map/, ".min.js") +
+                  "\",\"sources\":[\"" + unpathedFile.replace(/\.min\.map/, ".js") + "\"]");
+              fs.writeFileSync(releaseFile, text, "utf8");
+            } else if (/\.min\.js$/.test(releaseFile)) {
+              text = fs.readFileSync(builtFile, "utf8")
+                .replace(/\/\/# sourceMappingURL=\S+/, "");
+              fs.writeFileSync(releaseFile, text, "utf8");
+            } else {
+              fs.writeFileSync(releaseFile, fs.readFileSync(builtFile));
+            }
+            console.log("Created " + releaseFile + " from " + builtFile);
+          });
+          EOF
+          node "$RUNNER_TEMP/make-release-copies.js" "$GITHUB_WORKSPACE"
+          ls -la dist dist/cdn
+
+      - name: Pack
+        run: |
+          mkdir -p "$RUNNER_TEMP/pack" && npm pack && mv jquery-*.tgz "$RUNNER_TEMP/pack/"
+          tar tzvf "$RUNNER_TEMP"/pack/*.tgz
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jquery-tgz
+          path: ${{ runner.temp }}/pack/*.tgz
+          if-no-files-found: error
